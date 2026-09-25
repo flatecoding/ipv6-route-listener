@@ -66,16 +66,18 @@ validate_router "$ROUTER"
 # Log the configuration
 echo "🔍 Configuring ${IS_PREFIX:+prefix}${IS_PREFIX:-route}1: $PREFIX/$PREFIX_LEN via $ROUTER on interface $IFACE"
 
-# Remove any existing routes for this prefix
-# This includes both exact matches and higher-order subnets
-echo "🧹 Removing any existing routes for $PREFIX and its subnets"
+# Remove any existing route for this prefix that goes via the SAME router.
+# Routes via a DIFFERENT router are left untouched: two Thread Border Routers
+# can legitimately advertise the same shared OMR prefix as redundant entry
+# points into the same mesh, and clobbering one when the other's RA arrives
+# would leave only one path usable at a time.
+echo "🧹 Removing existing route for $PREFIX via $ROUTER (if any)"
 
 # Extract the base prefix without any length notation
 BASE_PREFIX=$(echo "$PREFIX" | sed 's/\/.*$//')
 
-# First, get all existing routes for this prefix
-echo "   Checking for existing routes..."
-ip -6 route show | grep "$BASE_PREFIX" | while read -r route; do
+echo "   Checking for existing routes via $ROUTER..."
+ip -6 route show | grep "$BASE_PREFIX" | grep "$ROUTER" | while read -r route; do
     if [ -n "$route" ]; then
         echo "   🗑️  Removing: $route"
         # Use eval to properly handle the route string
@@ -83,12 +85,10 @@ ip -6 route show | grep "$BASE_PREFIX" | while read -r route; do
     fi
 done
 
-# Try to remove any routes with specific prefix lengths
-# This handles cases where the route might be specified with a prefix length
-echo "   Checking for prefix length routes..."
+# Handle the case where this same router previously advertised the prefix
+# with a different prefix length.
+echo "   Checking for prefix length routes via $ROUTER..."
 for LENGTH in 64 48 32 16; do
-    echo "   🗑️  Trying /$LENGTH routes..."
-    ip -6 route del "$BASE_PREFIX/$LENGTH" 2>/dev/null || true
     ip -6 route del "$BASE_PREFIX/$LENGTH" via "$ROUTER" dev "$IFACE" 2>/dev/null || true
 done
 
